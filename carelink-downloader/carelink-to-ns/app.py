@@ -9,9 +9,11 @@ from datetime import datetime, timedelta
 # Get the environment variables to config the APP
 ns_URL = os.environ.get('NS_URL')
 api_secret = os.environ.get('API_SECRET')  # this must come in SHA-1 format
-app_debug = False
-app_debug = os.environ.get('APP_DEBUG')
+app_debug = False if os.environ.get('APP_DEBUG').lower() == 'false' else True
 
+# Load and parse the JSON
+# from S3
+s3 = boto3.client('s3')
 
 def lambda_handler(event, context):
     # The idea is:
@@ -26,18 +28,14 @@ def lambda_handler(event, context):
         })
     }
 
-
 def readDATA(event):
-
-    # Load and parse the JSON
-    # from S3
-    s3 = boto3.client('s3')
 
     try:
         obj = s3.get_object(Bucket=event['Records'][0]['s3']['bucket']
                             ['name'], Key=event['Records'][0]['s3']['object']['key'])
         data = json.loads(obj['Body'].read())
-        print(obj)
+        if app_debug:
+            print(obj)
     except botocore.exceptions.ClientError as error:
         # Put your error handling logic here
         raise error
@@ -111,8 +109,8 @@ def readDATA(event):
                       glucose["sg"], "] at date/time: ", glucose["datetime"], " with calculated timestamp: ", calc_timestamp)
             if calc_timestamp*1000 >= latest_entry_date:
                 # it's newer than the latest at NS, upload it
-                # if app_debug:
-                print("Uploading to NS glucose ", glucose["sg"])
+                if app_debug:
+                    print("Uploading to NS glucose ", glucose["sg"])
                 r = requests.post(ns_URL + '/api/v1/entries.json',
                                   headers={
                                       'api-secret': api_secret},
@@ -159,8 +157,8 @@ def readDATA(event):
                     data["markers"], markers["index"])
 
                 # it's newer than the latest at NS, upload it
-                # if app_debug:
-                print("Uploading to NS MEAL Carbs: ",
+                if app_debug:
+                    print("Uploading to NS MEAL Carbs: ",
                       markers["amount"], " with amount insulin:", meal_insulin)
                 r = requests.post(ns_URL + '/api/v1/treatments.json',
                                   headers={
