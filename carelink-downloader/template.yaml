@@ -27,11 +27,11 @@ Parameters:
     Description: Prefix name of the s3 bucket to be created. Remember it must be unique so add som pre/post-fix to make it unique worldwide.
   nsurl:
     Type: String
-    Default: https://juanen.herokuapp.com
+    Default: https://your-ns-site.herokuapp.com
     Description: just your NS URL
   nssecret: 
     Type: String
-    Default: e4485f0dbcd4475ccbcb349de77a2053af4baed6
+    Default: your-password-hassed-with-sha-1
     Description: your secret but hashed with SHA-1
 
 Resources:
