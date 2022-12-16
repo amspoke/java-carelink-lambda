@@ -1,0 +1,146 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  CL-synchronizer
+
+  This is a bunch of serverless APPS which will keep in sync you MM pump with nightscout. The main body is composed of two components, one that
+  will download the data from MM to an s3 bucket, and a second one that will be triggered when the object is stored in S3 to process the data 
+  and update the NightScout site. Hope you enjoy it.  
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 600
+
+Parameters:
+  mmusername: 
+    Type: String
+    Default: username
+    Description: username to authenticate with MM
+  mmpassword:
+    Type: String
+    Default: password
+    Description: password used to authenticate with MM
+  buckets3prefix:
+    Type: String
+    Default: jegp-mm-s3-sync
+    Description: Prefix name of the s3 bucket to be created. Remember it must be unique so add som pre/post-fix to make it unique worldwide.
+  nsurl:
+    Type: String
+    Default: https://juanen.herokuapp.com
+    Description: just your NS URL
+  nssecret: 
+    Type: String
+    Default: e4485f0dbcd4475ccbcb349de77a2053af4baed6
+    Description: your secret but hashed with SHA-1
+
+Resources:
+  CareLinkDownloaderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: CareLinkJavaClient-master
+      Handler: cldfunction.App::handleRequest
+      Runtime: java8
+      MemorySize: 512
+      Role: !GetAtt CarelinkDownloaderPermission.Arn
+      Events:
+        ScheduledEvent:
+          Name: Every5min
+          Type: Schedule
+          Properties:
+            Schedule: rate(5 minutes)
+      Environment: 
+        Variables:
+          JAVA_TOOL_OPTIONS: -XX:+TieredCompilation -XX:TieredStopAtLevel=1 # More info about tiered compilation https://aws.amazon.com/blogs/compute/optimizing-aws-lambda-function-performance-for-java/
+          OPTION_VERBOSE: true
+          OPTION_SESSION: false
+          OPTION_DATA: true
+          OPTION_ANONYM: false
+          OPTION_JSON_EXCEPTION: false
+          OPTION_REPEAT: 5
+          OPTION_WAIT: 30
+          OPTION_USERNAME: !Ref mmusername
+          OPTION_PASSWORD: !Ref mmpassword
+          OPTION_COUNTRY: ES
+          OPTION_S3BUCKET: !Sub ${buckets3prefix}-${AWS::Region}-mm-2-ns-synchronizer
+          OPTION_FOLDER: /tmp
+  
+  CarelinkDownloaderPermission:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action:
+                - 'sts:AssumeRole'
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: accessS3bucket
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:GetObjectAcl'
+                  - 's3:PutObject'
+                  - 's3:PutObjectAcl'
+                  - 's3:DeleteObject'
+                Resource: 
+                  - !Sub arn:aws:s3:::${buckets3prefix}-${AWS::Region}-mm-2-ns-synchronizer/*
+                  - !Sub arn:aws:s3:::${buckets3prefix}-${AWS::Region}-mm-2-ns-synchronizer
+
+  CarelinkToNSFunction:
+    Type: AWS::Serverless::Function 
+    Properties:
+      CodeUri: carelink-to-ns/
+      Handler: app.lambda_handler
+      Runtime: python3.9
+      Role: !GetAtt CarelinkDownloaderPermission.Arn
+      Environment:
+        Variables:
+            NS_URL: !Ref nsurl
+            API_SECRET: !Ref nssecret
+            APP_DEBUG: false
+
+  CarelinkToNSPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CarelinkToNSFunction
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub arn:aws:s3:::${buckets3prefix}-${AWS::Region}-mm-2-ns-synchronizer
+
+  S3BucketDownload:
+    DependsOn: CarelinkToNSPermission
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub ${buckets3prefix}-${AWS::Region}-mm-2-ns-synchronizer
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Function: !GetAtt CarelinkToNSFunction.Arn
+
+  DownloadScheduler:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: mmdownloadscheduler2
+
+Outputs:
+  CareLinkDownloaderFunction:
+    Description: "cld Function ARN"
+    Value: !GetAtt CareLinkDownloaderFunction.Arn
+  CareLinkDownloaderFunctionIamRole:
+    Description: "Implicit IAM Role created for cld"
+    Value: !GetAtt CareLinkDownloaderFunction.Arn
+  CarelinkToNSFunction:
+    Description: "CarelinkToNS function ARN"
+    Value: !GetAtt CarelinkToNSFunction.Arn
